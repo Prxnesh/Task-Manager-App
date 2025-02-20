@@ -1,7 +1,83 @@
 from flask import Flask, request, jsonify
 import sqlite3
+from flask import Flask, request, jsonify, session
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import UserMixin, LoginManager, login_user, login_required, logout_user, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 app = Flask(__name__)
+
+app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tasks.db'
+db = SQLAlchemy(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+
+# User model
+
+class User(db.Model, UserMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+
+# Task Model (Modify to include user_id)
+class Task(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    priority = db.Column(db.String(50), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))  # Link tasks to users
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+# Route: Register User
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
+    new_user = User(username=data['username'], password_hash=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({"message": "User registered successfully!"})
+
+# Route: Login User
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    user = User.query.filter_by(username=data['username']).first()
+    if user and check_password_hash(user.password_hash, data['password']):
+        login_user(user)
+        return jsonify({"message": "Login successful!"})
+    return jsonify({"error": "Invalid credentials"}), 401
+
+# Route: Logout User
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return jsonify({"message": "Logged out successfully!"})
+
+# Route: Create a Task (Now Requires Login)
+@app.route('/tasks', methods=['POST'])
+@login_required
+def create_task():
+    data = request.json
+    new_task = Task(title=data['title'], priority=data['priority'], user_id=current_user.id)
+    db.session.add(new_task)
+    db.session.commit()
+    return jsonify({"message": "Task added successfully!"})
+
+# Route: Get Tasks (Only User's Tasks)
+@app.route('/tasks', methods=['GET'])
+@login_required
+def get_tasks():
+    tasks = Task.query.filter_by(user_id=current_user.id).all()
+    return jsonify([{"id": task.id, "title": task.title, "priority": task.priority} for task in tasks])
+
+
+
 
 @app.route('/')
 def home():
